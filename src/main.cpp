@@ -1,15 +1,23 @@
+#include <chrono>
+#include <cstdint>
 #include <iostream>
 #include <ntcore_cpp.h>
 #include <opencv2/opencv.hpp>
 #include <imgui.h>
 #include <imgui_ProggyDotted.h>
 #include <imgui_impl_glfw.h>
+#include "GL/glcorearb.h"
 #include "imgui_impl_opengl3.h"
 #include <imgui_internal.h>
 #include "GL/gl3w.h"
 #include <GLFW/glfw3.h>
+#include <ratio>
+#include <list>
 
+#include "CvUtils.hpp"
 #include "colormod.h"
+
+using highres_clock = std::chrono::steady_clock;
 
 Color::Modifier default_color(Color::FG_DEFAULT);
 Color::Modifier info_color(Color::FG_CYAN);
@@ -20,10 +28,13 @@ static void glfw_error_callback(int error, const char* description)
 	fprintf(stderr, "Glfw Error %d: %s\n", error, description);
 }
 
-bool show_demo_window = true;
+bool show_demo_window = false;
 
 GLFWwindow* window;
-const ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
+const ImVec4 clear_color = ImVec4(0.15f, 0.15f, 0.15f, 1.00f);
+
+cv::Mat cvImage;
+GLuint cvimgTextureId = -1;
 
 void guiLoop();
 void fillFrame();
@@ -83,10 +94,16 @@ int main() {
 	
 	log_info("ImGui init OK");
 
+	cvImage = cv::imread("../resources/coolBoye.png");
+
 	while (!glfwWindowShouldClose(window)) {
 		guiLoop();
 	}
 
+	ImGui_ImplGlfw_Shutdown();
+	ImGui_ImplOpenGL3_Shutdown();
+	ImGui::DestroyContext();
+	glfwTerminate();
 	return 0;
 }
 
@@ -109,7 +126,35 @@ void guiLoop() {
 }
 
 void fillFrame() {
-	ImGui::ShowDemoWindow(&show_demo_window);
+	if (show_demo_window) ImGui::ShowDemoWindow(&show_demo_window);
+
+	ImGuiWindowFlags window_flags = 0;
+
+	ImGui::Begin( "imgui image", NULL, window_flags);
+
+	auto imageConvertBeginTime = highres_clock::now();
+	if (cvimgTextureId == (GLuint)-1) glGenTextures( 1, &cvimgTextureId );
+	glBindTexture( GL_TEXTURE_2D, cvimgTextureId );
+	glPixelStorei(GL_UNPACK_ALIGNMENT, (cvImage.step & 3) ? 1 : 4);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexImage2D( GL_TEXTURE_2D, 0, GL_RGB, cvImage.cols, cvImage.rows, 0, GL_BGR, GL_UNSIGNED_BYTE, cvImage.ptr() );
+	auto imageConvertElapsedTime = std::chrono::duration_cast<std::chrono::nanoseconds>(highres_clock::now() - imageConvertBeginTime);
+	ImGui::Image( reinterpret_cast<void*>( static_cast<intptr_t>( cvimgTextureId ) ), ImVec2( cvImage.cols, cvImage.rows ) );
+
+
+	ImGui::Text("Image Type: %s", CvUtils::type2str(cvImage.type()).c_str());
+	ImGui::End();
+
+	float imageConvertElapsedMillis = imageConvertElapsedTime.count() / 1000000.0f;
+	ImGui::Begin("Debug stats");
+	if(ImGui::TreeNode("Image Conversion")) {
+		ImGui::Text("OpenCV->OpenGL: %.2fms", imageConvertElapsedMillis);
+		ImGui::TreePop();
+	}
+	ImGui::End();
 }
 
 // Render frame
